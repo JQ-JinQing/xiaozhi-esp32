@@ -17,6 +17,9 @@ on:
     branches:
       - main
       - "ci/*" # for ci test
+    # 只改工作流文件本身时不必编译固件。
+    paths-ignore:
+      - '.github/**'
   pull_request:
     branches:
       - main
@@ -76,20 +79,22 @@ jobs:
           # Keep the full manual matrix out of environment variables.
           python scripts/build.py --select-changed < "$CHANGED_FILE" > "$RUNNER_TEMP/variants.json"
 
-          # 收窄矩阵：只保留指定板型 / 指定芯片，避免一次编译上百个变体。
+          # Narrow the matrix to the requested board/chip instead of building
+          # everything. Unit tests feed bare path strings here, so skip then.
           python - "$RUNNER_TEMP/variants.json" "$REQUESTED_BOARD" "$TARGET_CHIP" <<'PY'
           import json, sys
           path, board, chip = sys.argv[1], (sys.argv[2] or "").strip(), (sys.argv[3] or "").strip()
           variants = json.load(open(path, encoding="utf-8"))
           total = len(variants)
-          if board:
-              exact = [v for v in variants if v.get("name") == board]
-              variants = exact or [v for v in variants if v.get("board") == board]
-          if chip:
-              variants = [v for v in variants if v.get("target") == chip]
+          if (board or chip) and variants and all(isinstance(v, dict) for v in variants):
+              if board:
+                  exact = [v for v in variants if v.get("name") == board]
+                  variants = exact or [v for v in variants if v.get("board") == board]
+              if chip:
+                  variants = [v for v in variants if v.get("target") == chip]
           json.dump(variants, open(path, "w", encoding="utf-8"))
           print("variants: %d -> %d (board=%s, chip=%s)" % (total, len(variants), board or "*", chip or "*"))
-          print("selected:", [v.get("name") for v in variants])
+          print("selected:", [v.get("name") if isinstance(v, dict) else v for v in variants])
           PY
 
           {
