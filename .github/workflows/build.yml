@@ -1,8 +1,18 @@
 name: Build Boards
 
 on:
-  # Manual runs exercise the full matrix, including CI-specific options.
   workflow_dispatch:
+    inputs:
+      board:
+        description: '只编译这个板型；留空则按改动自动选择'
+        required: false
+        default: 'bread-compact-wifi'
+        type: string
+      chip:
+        description: '只编译这个芯片：esp32s3 / esp32c3 / esp32c6 / esp32c5 / esp32p4 / esp32 / esp32s31'
+        required: false
+        default: 'esp32s3'
+        type: string
   push:
     branches:
       - main
@@ -37,6 +47,8 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           BEFORE_SHA: ${{ github.event.before }}
+          REQUESTED_BOARD: ${{ inputs.board }}
+          TARGET_CHIP: ${{ inputs.chip || 'esp32s3' }}
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           CHANGED_FILE="$RUNNER_TEMP/changed-files.txt"
@@ -63,6 +75,23 @@ jobs:
 
           # Keep the full manual matrix out of environment variables.
           python scripts/build.py --select-changed < "$CHANGED_FILE" > "$RUNNER_TEMP/variants.json"
+
+          # 收窄矩阵：只保留指定板型 / 指定芯片，避免一次编译上百个变体。
+          python - "$RUNNER_TEMP/variants.json" "$REQUESTED_BOARD" "$TARGET_CHIP" <<'PY'
+          import json, sys
+          path, board, chip = sys.argv[1], (sys.argv[2] or "").strip(), (sys.argv[3] or "").strip()
+          variants = json.load(open(path, encoding="utf-8"))
+          total = len(variants)
+          if board:
+              exact = [v for v in variants if v.get("name") == board]
+              variants = exact or [v for v in variants if v.get("board") == board]
+          if chip:
+              variants = [v for v in variants if v.get("target") == chip]
+          json.dump(variants, open(path, "w", encoding="utf-8"))
+          print("variants: %d -> %d (board=%s, chip=%s)" % (total, len(variants), board or "*", chip or "*"))
+          print("selected:", [v.get("name") for v in variants])
+          PY
+
           {
             printf 'variants='
             cat "$RUNNER_TEMP/variants.json"
